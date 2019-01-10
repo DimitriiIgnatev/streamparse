@@ -35,11 +35,8 @@ from ..util import (
 )
 
 
-def _run_cmd(cmd, user, warn_only=False):
-    if user == env.user:
-        run(cmd, warn_only=warn_only)
-    else:
-        sudo(cmd, warn_only=warn_only, user=user)
+def _run_cmd(cmd, user, **kwargs):
+    return run(cmd, **kwargs) if user == env.user else sudo(cmd, user=user, **kwargs)
 
 
 @parallel
@@ -66,23 +63,27 @@ def _create_or_update_virtualenv(
 
         if isinstance(requirements_paths, string_types):
             requirements_paths = [requirements_paths]
+        temp_req_paths = []
         for requirements_path in requirements_paths:
             puts("Uploading {} to temporary file.".format(requirements_path))
             temp_req = run("mktemp /tmp/streamparse_requirements-XXXXXXXXX.txt")
-            put(requirements_path, temp_req)
+            temp_req_paths.append(temp_req)
+            put(requirements_path, temp_req, mode="0666")
 
-            puts("Updating virtualenv: {}".format(virtualenv_name))
-            cmd = "source {}".format(os.path.join(virtualenv_path, "bin/activate"))
-            with prefix(cmd):
-                # Make sure we're using latest pip so options work as expected
-                run("pip install --upgrade 'pip>=9.0'", pty=False)
-                run(
-                    "pip install -r {} --exists-action w --upgrade "
-                    "--upgrade-strategy only-if-needed".format(temp_req),
-                    pty=False,
-                )
+        puts("Updating virtualenv: {}".format(virtualenv_name))
+        pip_path = "/".join((virtualenv_path, "bin", "pip"))
+        # Make sure we're using latest pip so options work as expected
+        _run_cmd("{} install --upgrade 'pip>=9.0'".format(pip_path), user)
+        with show("everything"):
+            _run_cmd(
+                (
+                    "{} install -r {} --exists-action w --upgrade "
+                    "--upgrade-strategy only-if-needed --progress-bar off"
+                ).format(pip_path, " -r ".join(temp_req_paths)),
+                user,
+            )
 
-            run("rm {}".format(temp_req))
+            run("rm -f {}".format(" ".join(temp_req_paths)))
 
 
 def create_or_update_virtualenvs(
